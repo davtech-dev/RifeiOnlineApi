@@ -1,4 +1,4 @@
-// meu-backend/index.js - VERSÃO COM CORREÇÃO DO ERRO PathError
+// meu-backend/index.js - VERSÃO COMPLETA COM LÓGICA DE REGISTRO E LOGIN
 
 // --- 1. IMPORTAÇÕES ---
 require('dotenv').config();
@@ -26,9 +26,6 @@ const corsOptions = {
         }
     }
 };
-
-// REMOVEMOS a linha app.options('*', ...) que causava o crash.
-// A linha abaixo é suficiente para lidar com todas as requisições, incluindo as de preflight (OPTIONS).
 app.use(cors(corsOptions));
 app.use(express.json());
 
@@ -41,7 +38,7 @@ const dbConfig = {
 };
 
 // --- 3. ENDPOINTS DA API ---
-// (O restante do seu código permanece exatamente o mesmo)
+
 app.get('/', (req, res) => {
     res.status(200).json({
         message: 'API RifeiOnline no ar! (Hospedado na Render)',
@@ -50,12 +47,93 @@ app.get('/', (req, res) => {
     });
 });
 
+// --- ENDPOINT DE REGISTRO DE ADMIN ---
 app.post('/register-admin', async (req, res) => {
-    // seu código de registro...
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+        return res.status(400).json({ error: 'Todos os campos (nome, email, senha) são obrigatórios.' });
+    }
+
+    let connection;
+    try {
+        // Criptografa a senha antes de salvar
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        connection = await mysql.createConnection(dbConfig);
+        
+        // Insere o usuário com a senha criptografada e o role 'admin'
+        await connection.execute(
+            'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
+            [name, email, hashedPassword, 'admin']
+        );
+        
+        res.status(201).json({ message: 'Usuário admin criado com sucesso!' });
+    } catch (error) {
+        // Trata o erro de email duplicado
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ error: 'Este email já está em uso.' });
+        }
+        console.error('Erro ao registrar admin:', error);
+        res.status(500).json({ error: 'Erro no servidor ao registrar.' });
+    } finally {
+        if (connection) await connection.end();
+    }
 });
 
+// --- ENDPOINT DE LOGIN ---
 app.post('/login', async (req, res) => {
-    // seu código de login...
+    const { email, password } = req.body;
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email e senha são obrigatórios.' });
+    }
+
+    let connection;
+    try {
+        connection = await mysql.createConnection(dbConfig);
+        
+        // 1. Busca o usuário pelo email
+        const [rows] = await connection.execute('SELECT * FROM users WHERE email = ?', [email]);
+        
+        if (rows.length === 0) {
+            return res.status(401).json({ error: 'Credenciais inválidas.' });
+        }
+
+        const user = rows[0];
+
+        // 2. Verifica se o usuário é um admin
+        if (user.role !== 'admin') {
+            return res.status(403).json({ error: 'Acesso negado.' });
+        }
+
+        // 3. Compara a senha enviada com a senha criptografada no banco
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid) {
+            return res.status(401).json({ error: 'Credenciais inválidas.' });
+        }
+
+        // 4. Gera o Token JWT
+        const tokenPayload = { id: user.id, role: user.role };
+        const token = jwt.sign(
+            tokenPayload,
+            process.env.JWT_SECRET || 'SEGREDO_SUPER_SECRETO',
+            { expiresIn: '8h' }
+        );
+        
+        // 5. Remove a senha antes de enviar a resposta
+        delete user.password;
+
+        res.status(200).json({
+            message: "Login bem-sucedido!",
+            token: token,
+            user: user
+        });
+
+    } catch (error) {
+        console.error("Erro no processo de login:", error);
+        res.status(500).json({ error: 'Erro interno do servidor.' });
+    } finally {
+        if (connection) await connection.end();
+    }
 });
 
 
