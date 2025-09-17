@@ -1,18 +1,21 @@
 [build]
-  # A Netlify irá rodar 'npm install' automaticamente. Nenhum outro comando de build é necessário.
+  # Nenhum comando de build é necessário, pois a Netlify instala as dependências automaticamente
   command = "echo 'Nenhum build necessário'"
-  # O diretório onde a nossa função serverless está localizada
+  
+  # A pasta onde as funções compiladas serão colocadas pela Netlify (padrão)
   functions = ".netlify/functions/"
 
 [functions]
-  # O nome do arquivo que contém nosso handler.
-  # O Netlify vai transformar 'api.js' em uma função acessível em '/.netlify/functions/api'
+  # Define o empacotador para a função Node.js
   node_bundler = "esbuild"
+  # Garante que a pasta node_modules seja incluída no deploy da função
   included_files = ["node_modules/**"]
 
+# Esta é a parte mais importante
 [[redirects]]
-  # Esta é a regra mágica: redireciona todas as chamadas (ex: /login)
-  # para a nossa função serverless, fazendo-a se comportar como uma API tradicional.
+  # Pega TODAS as requisições que chegam ao site...
   from = "/*"
+  # ...e as envia para a nossa função 'api' para serem processadas pelo Express.
   to = "/.netlify/functions/api/:splat"
+  # Responde com status 200 (OK), tratando como uma reescrita interna, não um redirecionamento.
   status = 200
