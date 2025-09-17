@@ -1,7 +1,7 @@
 // meu-backend/index.js
 
 // --- 1. IMPORTAÇÕES ---
-require('dotenv').config(); 
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
@@ -12,7 +12,28 @@ const jwt = require('jsonwebtoken'); // Para criar o token de acesso
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+// --- NOVA CONFIGURAÇÃO DE CORS ---
+// Lista de domínios que têm permissão para acessar esta API
+const whitelist = [
+    'https://rifeionlineapp.netlify.app', // Seu frontend em produção
+    'http://localhost:5173', // Seu frontend em desenvolvimento local (ajuste a porta se for diferente)
+    'https://rifeionline.com.br'// URL original
+];
+
+const corsOptions = {
+    origin: function (origin, callback) {
+        // Se a origem da requisição estiver na nossa lista, permite
+        if (whitelist.indexOf(origin) !== -1 || !origin) { // !origin permite requisições sem origem (ex: Postman)
+            callback(null, true)
+        } else {
+            // Se não estiver na lista, rejeita com um erro de CORS
+            callback(new Error('Not allowed by CORS'))
+        }
+    }
+};
+
+// Aplica o middleware do CORS com as opções que definimos
+app.use(cors(corsOptions));
 app.use(express.json());
 
 const dbConfig = {
@@ -74,7 +95,7 @@ app.post('/login', async (req, res) => {
 
         // 1. Busca o usuário no banco pelo email
         const [rows] = await connection.execute('SELECT * FROM users WHERE email = ?', [email]);
-        
+
         // Se não encontrar o usuário, retorna um erro genérico por segurança
         if (rows.length === 0) {
             return res.status(401).json({ error: 'Credenciais inválidas.' });
@@ -95,14 +116,14 @@ app.post('/login', async (req, res) => {
         }
 
         // 4. Se a senha estiver correta, cria o payload do Token JWT
-        const tokenPayload = { 
-            id: user.id, 
-            role: user.role 
+        const tokenPayload = {
+            id: user.id,
+            role: user.role
         };
 
         // 5. Gera o token
         const token = jwt.sign(
-            tokenPayload, 
+            tokenPayload,
             process.env.JWT_SECRET || 'SEGREDO_PADRAO_PARA_TESTES', // Use uma chave secreta forte no .env!
             { expiresIn: '8h' } // O token será válido por 8 horas
         );
