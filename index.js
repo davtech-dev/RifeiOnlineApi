@@ -120,8 +120,4 @@ app.post('/login', async (req, res) => {
 });
 
 
-// --- 4. INICIALIZAÇÃO DO SERVIDOR ---
-app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
-    console.log('Endpoints disponíveis: POST /register-admin, POST /login');
-});
+module.exports = app;
