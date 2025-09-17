@@ -1,16 +1,18 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+require('./config/db'); // Importa e inicializa o pool de conexões
 
 // Importa nossas rotas
 const authRoutes = require('./routes/authRoutes');
 const raffleRoutes = require('./routes/raffleRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
 
 const app = express();
 
 // --- CONFIGURAÇÃO DE CORS ---
 const whitelist = [
-    'https://rifeionlineapp.netlify.app', // Frontend em produção
+    'https://rifeionlineapi.onrender.com', // Frontend em produção
     'http://localhost:5173', // Frontend em desenvolvimento
     'https://rifeionline.com.br'
 ];
@@ -30,6 +32,7 @@ app.use(express.json());
 // Padronizando todas as rotas da API sob o prefixo /api
 app.use('/api/auth', authRoutes); // Ex: /api/auth/login
 app.use('/api/raffles', raffleRoutes); // Ex: /api/raffles/
+app.use('/api/upload', uploadRoutes);
 
 // Rota raiz para verificação de status
 app.get('/', (req, res) => {

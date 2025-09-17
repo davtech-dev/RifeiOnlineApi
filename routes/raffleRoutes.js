@@ -1,19 +1,17 @@
 const express = require('express');
-const router = express.Router();
+const router = express.Router(); // 1. Garante que o router foi inicializado
 const authMiddleware = require('../middleware/authMiddleware');
-const db = require('../config/db'); // IMPORTANTE: Usando o pool de conexões compartilhado
+const db = require('../config/db'); // Garante que está usando o pool de conexões
 
-// --- ROTAS PROTEGIDAS POR AUTENTICAÇÃO ---
-// Todas as rotas neste arquivo usarão o middleware
+// Aplica o middleware de autenticação a todas as rotas deste arquivo
 router.use(authMiddleware);
 
 /**
  * ROTA PARA LISTAR TODAS AS RIFAS (Admin)
- * GET /api/raffles/
+ * GET /api/raffles
  */
 router.get('/', async (req, res) => {
     try {
-        // Usa o pool diretamente para uma query simples
         const [raffles] = await db.execute('SELECT * FROM raffles ORDER BY created_at DESC');
         res.status(200).json(raffles);
     } catch (error) {
@@ -24,9 +22,10 @@ router.get('/', async (req, res) => {
 
 /**
  * ROTA PARA CADASTRAR UMA NOVA RIFA COMPLETA (Admin)
- * POST /api/raffles/
+ * POST /api/raffles
  */
 router.post('/', async (req, res) => {
+    // 2. Garante que a rota está definida com router.post('/', ...)
     if (req.user.role !== 'admin') {
         return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
     }
@@ -37,38 +36,27 @@ router.post('/', async (req, res) => {
         return res.status(400).json({ error: 'Campos obrigatórios ou em formato inválido estão faltando.' });
     }
 
-    // Para transações, pegamos uma conexão específica do pool
     let connection;
     try {
         connection = await db.getConnection();
         await connection.beginTransaction();
 
-        // 1. Insere na tabela 'raffles'
         const [raffleResult] = await connection.execute(
             'INSERT INTO raffles (title, description, total_numbers, price_per_number) VALUES (?, ?, ?, ?)',
             [title, description, total_numbers, price_per_number]
         );
         const raffleId = raffleResult.insertId;
 
-        // 2. Insere na tabela 'raffle_images' (usando Promise.all para performance)
-        const imagePromises = images.map(image => {
-            return connection.execute(
-                'INSERT INTO raffle_images (raffle_id, image_url, is_primary) VALUES (?, ?, ?)',
-                [raffleId, image.url, image.is_primary || false]
-            );
-        });
-        await Promise.all(imagePromises);
+        const imagePromises = images.map(image => 
+            connection.execute('INSERT INTO raffle_images (raffle_id, image_url, is_primary) VALUES (?, ?, ?)', [raffleId, image.url, image.is_primary || false])
+        );
+        
+        const awardPromises = awards.map(award => 
+            connection.execute('INSERT INTO raffle_awards (raffle_id, placement, description) VALUES (?, ?, ?)', [raffleId, award.placement, award.description])
+        );
 
-        // 3. Insere na tabela 'raffle_awards' (usando Promise.all para performance)
-        const awardPromises = awards.map(award => {
-            return connection.execute(
-                'INSERT INTO raffle_awards (raffle_id, placement, description) VALUES (?, ?, ?)',
-                [raffleId, award.placement, award.description]
-            );
-        });
-        await Promise.all(awardPromises);
+        await Promise.all([...imagePromises, ...awardPromises]);
 
-        // Se tudo deu certo, confirma a transação
         await connection.commit();
         res.status(201).json({ message: 'Rifa criada com sucesso!', raffleId: raffleId });
 
@@ -77,9 +65,9 @@ router.post('/', async (req, res) => {
         console.error('Erro ao criar rifa:', error);
         res.status(500).json({ error: 'Erro interno ao criar a rifa.' });
     } finally {
-        // IMPORTANTE: Libera a conexão de volta para o pool
         if (connection) connection.release();
     }
 });
 
+// 3. PONTO MAIS CRÍTICO: Garante que o router está sendo exportado no final
 module.exports = router;
