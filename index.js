@@ -1,4 +1,4 @@
-// meu-backend/index.js - VERSÃO CORRETA E COMPLETA PARA RENDER
+// meu-backend/index.js - VERSÃO COM CORREÇÃO DO ERRO PathError
 
 // --- 1. IMPORTAÇÕES ---
 require('dotenv').config();
@@ -9,7 +9,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 // --- 2. CONFIGURAÇÃO INICIAL ---
-const app = express(); // <-- A linha que cria a variável 'app'. ESSENCIAL!
+const app = express();
 
 // --- CONFIGURAÇÃO DE CORS ---
 const whitelist = [
@@ -26,7 +26,9 @@ const corsOptions = {
         }
     }
 };
-app.options('*', cors(corsOptions));
+
+// REMOVEMOS a linha app.options('*', ...) que causava o crash.
+// A linha abaixo é suficiente para lidar com todas as requisições, incluindo as de preflight (OPTIONS).
 app.use(cors(corsOptions));
 app.use(express.json());
 
@@ -39,6 +41,7 @@ const dbConfig = {
 };
 
 // --- 3. ENDPOINTS DA API ---
+// (O restante do seu código permanece exatamente o mesmo)
 app.get('/', (req, res) => {
     res.status(200).json({
         message: 'API RifeiOnline no ar! (Hospedado na Render)',
@@ -48,17 +51,16 @@ app.get('/', (req, res) => {
 });
 
 app.post('/register-admin', async (req, res) => {
-    // ... seu código de registro ...
+    // seu código de registro...
 });
 
 app.post('/login', async (req, res) => {
-    // ... seu código de login ...
+    // seu código de login...
 });
 
+
 // --- 4. INICIALIZAÇÃO DO SERVIDOR ---
-// Esta parte é a que a Render usa para iniciar o seu serviço.
-// A Render fornecerá a porta através de process.env.PORT.
-const PORT = process.env.PORT || 3001; 
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
     console.log(`Servidor rodando com sucesso na porta ${PORT}`);
 });
