@@ -23,7 +23,13 @@ const dbConfig = {
 };
 
 // --- 3. ENDPOINTS DA API ---
-
+app.get('/', (req, res) => {
+    res.status(200).json({
+        message: 'API RifeiOnline no ar!',
+        status: 'ok',
+        timestamp: new Date().toISOString() // Adiciona a data/hora atual
+    });
+});
 // --- ENDPOINT DE REGISTRO DE ADMIN ---
 app.post('/register-admin', async (req, res) => {
     console.log('Recebida requisição em /register-admin');
