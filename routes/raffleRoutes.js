@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
 const db = require('../config/db');
+const cloudinary = require('cloudinary').v2;
 
 // Aplica o middleware de autenticação a todas as rotas de rifas
 router.use(authMiddleware);
@@ -109,45 +110,38 @@ router.post('/', async (req, res) => {
     }
 });
 
-// --- NOVO: ROTA PARA EXCLUIR UMA RIFA (Admin) ---
-// DELETE /api/raffles/:id
-// Corresponde à ação do botão "Excluir" no frontend.
-router.delete('/:id', async (req, res) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
-    }
 
+// --- NOVO: ROTA PARA OBTER DADOS DE UMA ÚNICA RIFA ---
+// GET /api/raffles/:id
+// Essencial para carregar os dados no formulário de edição.
+router.get('/:id', async (req, res) => {
     const { id } = req.params;
-    let connection;
     try {
-        connection = await db.getConnection();
-        await connection.beginTransaction();
+        // 1. Busca os dados principais da rifa
+        const [raffle] = await db.execute('SELECT * FROM raffles WHERE id = ?', [id]);
 
-        // É crucial deletar de tabelas "filhas" antes da tabela "pai" para evitar erros de chave estrangeira.
-        await connection.execute('DELETE FROM raffle_images WHERE raffle_id = ?', [id]);
-        await connection.execute('DELETE FROM raffle_awards WHERE raffle_id = ?', [id]);
-        // Se houver uma tabela de tickets, também deve ser deletada aqui.
-        // await connection.execute('DELETE FROM raffle_tickets WHERE raffle_id = ?', [id]);
-
-        const [deleteResult] = await connection.execute('DELETE FROM raffles WHERE id = ?', [id]);
-
-        if (deleteResult.affectedRows === 0) {
-            await connection.rollback();
+        if (raffle.length === 0) {
             return res.status(404).json({ error: 'Rifa não encontrada.' });
         }
 
-        await connection.commit();
-        res.status(200).json({ message: 'Rifa excluída com sucesso.' });
+        // 2. Busca os dados relacionados (imagens e prêmios)
+        const [images] = await db.execute('SELECT image_url as url, is_primary FROM raffle_images WHERE raffle_id = ?', [id]);
+        const [awards] = await db.execute('SELECT placement, description FROM raffle_awards WHERE raffle_id = ? ORDER BY placement ASC', [id]);
+
+        // 3. Monta o objeto final no mesmo formato que o frontend espera
+        const raffleDetails = {
+            ...raffle[0],
+            images: images || [], // Garante que seja sempre um array
+            awards: awards || []  // Garante que seja sempre um array
+        };
+
+        res.status(200).json(raffleDetails);
 
     } catch (error) {
-        if (connection) await connection.rollback();
-        console.error(`Erro ao excluir rifa ${id}:`, error);
-        res.status(500).json({ error: 'Erro interno ao excluir a rifa.' });
-    } finally {
-        if (connection) connection.release();
+        console.error(`Erro ao buscar detalhes da rifa ${id}:`, error);
+        res.status(500).json({ error: 'Erro interno ao buscar detalhes da rifa.' });
     }
 });
-
 
 // --- NOVO: ROTA PARA ATUALIZAR UMA RIFA (Admin) ---
 // PUT /api/raffles/:id
@@ -159,10 +153,11 @@ router.put('/:id', async (req, res) => {
     }
 
     const { id } = req.params;
-    const { title, description, total_numbers, price_per_number, images, awards } = req.body;
+    // ** ATUALIZADO: Captura dos novos campos do body **
+    const { title, description, rules, draw_date, status, total_numbers, price_per_number, images, awards } = req.body;
 
-    // Validação similar à da criação
-    if (!title || !total_numbers || !price_per_number || !Array.isArray(images) || !Array.isArray(awards)) {
+    // ** ATUALIZADO: Validação incluindo os novos campos **
+    if (!title || !draw_date || !status || !total_numbers || !price_per_number || !Array.isArray(images) || !Array.isArray(awards)) {
         return res.status(400).json({ error: 'Campos obrigatórios ou em formato inválido estão faltando.' });
     }
 
@@ -171,13 +166,17 @@ router.put('/:id', async (req, res) => {
         connection = await db.getConnection();
         await connection.beginTransaction();
 
-        // 1. Atualiza os dados principais da rifa
-        await connection.execute(
-            'UPDATE raffles SET title = ?, description = ?, total_numbers = ?, price_per_number = ? WHERE id = ?',
-            [title, description, total_numbers, price_per_number, id]
-        );
+        // ** ATUALIZADO: Query de atualização com os novos campos **
+        const sql = `
+            UPDATE raffles SET 
+            title = ?, description = ?, rules = ?, draw_date = ?, status = ?, 
+            total_numbers = ?, price_per_number = ? 
+            WHERE id = ?
+        `;
+        const values = [title, description, rules, draw_date, status, total_numbers, price_per_number, id];
+        await connection.execute(sql, values);
 
-        // 2. Limpa as imagens e prêmios antigos (estratégia "delete-and-insert", mais simples de gerenciar)
+        // 2. Limpa as imagens e prêmios antigos (estratégia "delete-and-insert")
         await connection.execute('DELETE FROM raffle_images WHERE raffle_id = ?', [id]);
         await connection.execute('DELETE FROM raffle_awards WHERE raffle_id = ?', [id]);
 
@@ -204,5 +203,86 @@ router.put('/:id', async (req, res) => {
     }
 });
 
+
+
+// --- NOVO: ROTA PARA EXCLUIR UMA RIFA (Admin) ---
+// DELETE /api/raffles/:id
+// Corresponde à ação do botão "Excluir" no frontend.
+router.delete('/:id', async (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Acesso negado.' });
+    }
+
+    const { id } = req.params;
+    let connection;
+    try {
+        connection = await db.getConnection();
+        await connection.beginTransaction();
+
+        // --- VALIDAÇÃO DE REGRAS DE NEGÓCIO (permanece a mesma) ---
+        const [raffleResult] = await connection.execute('SELECT status FROM raffles WHERE id = ?', [id]);
+        if (raffleResult.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'Rifa não encontrada.' });
+        }
+        if (raffleResult[0].status === 'sorteada') {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Não é possível excluir uma rifa que já foi sorteada.' });
+        }
+        const [salesResult] = await connection.execute('SELECT COUNT(*) as salesCount FROM order_numbers WHERE raffle_id = ?', [id]);
+        if (salesResult[0].salesCount > 0) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Não é possível excluir uma rifa que já possui números vendidos.' });
+        }
+
+        // --- NOVO: LÓGICA PARA EXCLUIR IMAGENS DO CLOUDINARY ---
+        // 1. Buscar todas as URLs de imagem da rifa
+        const [images] = await connection.execute('SELECT image_url FROM raffle_images WHERE raffle_id = ?', [id]);
+
+        if (images.length > 0) {
+            console.log(`Encontradas ${images.length} imagens para excluir do Cloudinary.`);
+
+            // 2. Criar uma lista de promessas de exclusão
+            const deletionPromises = images.map(image => {
+                const imageUrl = image.image_url;
+                const match = imageUrl.match(/rifas\/(.+?)\.\w+$/);
+                const public_id_encoded = match ? `rifas/${match[1]}` : null;
+
+                if (public_id_encoded) {
+                    const public_id_decoded = decodeURIComponent(public_id_encoded);
+                    console.log(`Agendando exclusão para o public_id: ${public_id_decoded}`);
+                    // 3. Retorna a promessa de exclusão do Cloudinary
+                    return cloudinary.uploader.destroy(public_id_decoded);
+                }
+                return Promise.resolve(); // Retorna uma promessa resolvida para URLs inválidas
+            });
+
+            // 4. Executa todas as exclusões em paralelo para maior eficiência
+            await Promise.all(deletionPromises);
+            console.log('Processo de exclusão do Cloudinary finalizado.');
+        }
+
+        // --- EXCLUSÃO DO BANCO DE DADOS (após exclusão no Cloudinary) ---
+        console.log(`Iniciando exclusão do banco de dados para a rifa ID: ${id}`);
+        await connection.execute('DELETE FROM raffle_images WHERE raffle_id = ?', [id]);
+        await connection.execute('DELETE FROM raffle_awards WHERE raffle_id = ?', [id]);
+        const [deleteResult] = await connection.execute('DELETE FROM raffles WHERE id = ?', [id]);
+
+        if (deleteResult.affectedRows === 0) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'Rifa não encontrada durante a exclusão.' });
+        }
+
+        await connection.commit();
+        res.status(200).json({ message: 'Rifa e todas as imagens associadas foram excluídas com sucesso.' });
+
+    } catch (error) {
+        if (connection) await connection.rollback();
+        console.error(`Erro ao excluir rifa ${id}:`, error);
+        res.status(500).json({ error: 'Erro interno ao excluir a rifa.' });
+    } finally {
+        if (connection) connection.release();
+    }
+});
 
 module.exports = router;
