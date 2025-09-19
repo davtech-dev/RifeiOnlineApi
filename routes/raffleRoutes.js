@@ -10,22 +10,45 @@ router.use(authMiddleware);
 
 // --- AJUSTE: ROTA PARA LISTAR TODAS AS RIFAS COM IMAGEM PRINCIPAL ---
 // GET /api/raffles
-// Objetivo: Retornar uma lista otimizada para os cards do frontend.
+// --- ROTA PARA LISTAR TODAS AS RIFAS COM PAGINAÇÃO ---
+// GET /api/raffles?page=1&limit=12
 router.get('/', async (req, res) => {
     try {
-        // SQL Otimizado: Usamos LEFT JOIN para buscar a imagem principal (is_primary = true)
-        // de cada rifa em uma única consulta. Isso é muito mais performático.
-        const query = `
+        // 1. Captura os parâmetros da query, com valores padrão
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit, 10) || 12; // 12 itens por página como padrão
+        const offset = (page - 1) * limit;
+
+        // 2. Query para contar o total de itens (sem paginação)
+        const countQuery = 'SELECT COUNT(*) as total FROM raffles';
+        const [totalResult] = await db.execute(countQuery);
+        const totalItems = totalResult[0].total;
+        const totalPages = Math.ceil(totalItems / limit);
+
+        // 3. Query para buscar os dados da página atual
+        const dataQuery = `
             SELECT 
-                r.*, 
+                r.id, r.title, r.total_numbers, r.price_per_number, r.status, r.draw_date,
                 ri.image_url AS imageUrl
             FROM raffles r
             LEFT JOIN raffle_images ri ON r.id = ri.raffle_id AND ri.is_primary = true
             ORDER BY r.created_at DESC
+            LIMIT ?
+            OFFSET ?
         `;
-        const [raffles] = await db.execute(query);
+        const [raffles] = await db.execute(dataQuery, [limit, offset]);
 
-        res.status(200).json(raffles);
+        // 4. Envia uma resposta estruturada com os dados e informações de paginação
+        res.status(200).json({
+            data: raffles,
+            pagination: {
+                currentPage: page,
+                totalPages: totalPages,
+                totalItems: totalItems,
+                limit: limit
+            }
+        });
+
     } catch (error) {
         console.error('Erro ao buscar rifas:', error);
         res.status(500).json({ error: 'Erro ao buscar rifas.' });
@@ -40,9 +63,11 @@ router.post('/', async (req, res) => {
         return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
     }
 
-    const { title, description, total_numbers, price_per_number, images, awards } = req.body;
+    // ** ATUALIZADO: Captura dos novos campos do body **
+    const { title, description, rules, draw_date, status, total_numbers, price_per_number, images, awards } = req.body;
 
-    if (!title || !total_numbers || !price_per_number || !Array.isArray(images) || !Array.isArray(awards)) {
+    // ** ATUALIZADO: Validação incluindo os novos campos **
+    if (!title || !draw_date || !status || !total_numbers || !price_per_number || !Array.isArray(images) || !Array.isArray(awards)) {
         return res.status(400).json({ error: 'Campos obrigatórios ou em formato inválido estão faltando.' });
     }
 
@@ -51,10 +76,15 @@ router.post('/', async (req, res) => {
         connection = await db.getConnection();
         await connection.beginTransaction();
 
-        const [raffleResult] = await connection.execute(
-            'INSERT INTO raffles (title, description, total_numbers, price_per_number) VALUES (?, ?, ?, ?)',
-            [title, description, total_numbers, price_per_number]
-        );
+        // ** ATUALIZADO: Query de inserção com os novos campos **
+        const sql = `
+            INSERT INTO raffles 
+            (title, description, rules, total_numbers, price_per_number, status, draw_date) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `;
+        const values = [title, description, rules, total_numbers, price_per_number, status, draw_date];
+
+        const [raffleResult] = await connection.execute(sql, values);
         const raffleId = raffleResult.insertId;
 
         const imagePromises = images.map(image =>
@@ -78,7 +108,6 @@ router.post('/', async (req, res) => {
         if (connection) connection.release();
     }
 });
-
 
 // --- NOVO: ROTA PARA EXCLUIR UMA RIFA (Admin) ---
 // DELETE /api/raffles/:id
